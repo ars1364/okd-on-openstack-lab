@@ -41,14 +41,26 @@
         state: present
       register: machines_subnet
 
-    - name: Ensure machines router exists with external gateway
+    - name: Look up the external network ID (admin-scope module call to bypass project filter)
+      openstack.cloud.networks_info:
+        cloud: "{{ openstack_cloud_name }}"
+        filters:
+          name: "{{ okd_external_network }}"
+      register: ext_net_info
+
+    - name: Sanity ext network found
+      ansible.builtin.assert:
+        that: ext_net_info.networks | length > 0
+        fail_msg: "External network {{ okd_external_network }} not found"
+
+    - name: Ensure machines router exists with external gateway (use UUIDs to dodge project scope)
       openstack.cloud.router:
         cloud: "{{ openstack_cloud_name }}"
         project: "{{ okd_proj.projects[0].id }}"
         name: "{{ okd_cluster_name }}-router"
-        network: "{{ okd_external_network }}"
+        network: "{{ ext_net_info.networks[0].id }}"
         interfaces:
-          - "{{ machines_subnet.subnet.name }}"
+          - "{{ machines_subnet.subnet.id }}"
         state: present
       register: machines_router
 
