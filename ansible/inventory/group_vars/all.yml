@@ -18,8 +18,8 @@ okd_quota:
   volumes: 30
   gigabytes: 800
   floating_ips: 10
-  secgroups: 20
-  secgroup_rules: 100
+  secgroups: 50         # OKD with terraform path adds many SGs (P11)
+  secgroup_rules: 300   # OKD installer creates ~56 rules + existing default SG rules
   networks: 10
   subnets: 10
   routers: 5

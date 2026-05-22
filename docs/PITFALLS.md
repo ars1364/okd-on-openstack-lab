@@ -200,3 +200,44 @@ level=error msg=failed to fetch Metadata: failed to load asset "Install Config":
 
 DHCP leases now hand out from `10.0.1.x` onward, and the installer's default VIPs `10.0.0.5`/`10.0.0.7` are reserved.
 
+
+## P11. OKD with `machinesSubnet` set switches to the terraform install path; quota for SecurityGroupRules is way higher than CAPI path needs
+
+**Symptom:**
+
+```
+level=fatal msg="failed to fetch Cluster: failed to fetch dependency of "Cluster": failed to generate asset "Platform Quota Check": error(MissingQuota): SecurityGroupRule is not available because the required number of resources (56) is more than remaining quota of 48"
+```
+
+**Cause:** When `platform.openstack.machinesSubnet` is set (P9 fix), the OKD 4.22 installer takes a different code path than the default CAPI-only flow — it falls back to a terraform-generator path (`terraform.tfvars.json` shows up in `cluster-config/`). That path creates substantially more Neutron security group rules (around 56) than the CAPI path. The default 100-rule quota might still be tight if the default SG already has its baseline rules.
+
+**Fix:** Bump `secgroup_rules` to 300 (and `secgroups` to 50 for headroom) in the OpenStack project quota. The `group_vars/all.yml` has these defaults; `02-project-network.yml` applies them.
+
+**Note:** This is the same "the install path branches based on flags" behavior that complicates IaC. If you ever stop setting `machinesSubnet` (i.e. accept the default CAPI flow), the SG rule budget can drop back to ~30.
+
+## P12. Stale `cluster-api/cluster-api` binary in cluster-config makes the next install attempt fail with `text file busy`
+
+**Symptom:**
+
+```
+level=error msg="failed to fetch Cluster: failed to generate asset "Cluster": failed to create cluster: failed to run cluster api system: failed to run local control plane: failed to unpack cluster-api binary: failed to extract \"/home/ubuntu/projects/okd-on-openstack-lab/cluster-config/cluster-api/cluster-api\": open ... text file busy"
+```
+
+**Cause:** A previous `openshift-install create cluster` attempt extracted its CAPI controller binary into `cluster-config/cluster-api/` and left it running when the parent process was killed mid-run. The next attempt tries to overwrite that file, but the kernel returns ETXTBSY because the binary is still mapped in memory by the still-alive process.
+
+**Fix:** Between attempts, kill any leftover processes and clear the directory:
+
+```bash
+pkill -9 -f "cluster-api-provider" || true
+pkill -9 -f "openshift-install"   || true
+pkill -9 -f "envtest"             || true
+rm -rf cluster-config/cluster-api cluster-config/.clusterapi_output \
+       cluster-config/manifests cluster-config/openshift cluster-config/auth \
+       cluster-config/bootstrap.ign cluster-config/master.ign cluster-config/worker.ign \
+       cluster-config/tls
+rm -f cluster-config/install-config.yaml cluster-config/.openshift_install_state.json \
+      cluster-config/metadata.json cluster-config/.openshift_install.log \
+      cluster-config/05-create.log cluster-config/terraform.*.tfvars.json
+```
+
+(The destroy playbook will also do this implicitly via `openshift-install destroy cluster`.)
