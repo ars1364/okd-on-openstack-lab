@@ -73,18 +73,26 @@ sshKey: |
 
 ---
 
-## P7. (placeholder) — bootstrap-complete stall
 
-Will be filled with what actually happened when the install hit `wait-for bootstrap-complete`, if it stalls. The expected failure-order checks (bottom-up) are:
+## P7. First-attempt install: master-0 OpenStackServer never created; 15-min `provision control-plane` timeout fires
 
-1. OpenStack: `openstack server list --project okd` (bootstrap + 3 masters created?)
-2. Neutron: `openstack port list --project okd` + FIP associations
-3. Security groups: `openstack security group list --project okd`
-4. Bootstrap kubelet / cri-o journal (SSH into bootstrap)
-5. etcd / kube-apiserver static pod logs from bootstrap node
-6. Control-plane logs (after masters join)
-7. Cluster operators (only after CP up)
+**Symptom:** `openshift-install create cluster` exits after 15 minutes with `failed to provision control-plane machines within 15m0s`. In OpenStack, the bootstrap + 2 of 3 masters are ACTIVE; master-0 has a created Cinder root volume (status `available`) and a created Neutron port (status `DOWN`) but no Nova server.
 
-## P8. (placeholder) — install-complete stall
+**Logs of interest:**
+```
+level=debug msg="E0522 15:12:53.896332 ... \"failed to patch OpenStackMachine ... okd-8k99z-master-0 ... admission webhook \\\"validation.openstackmachine.infrastructure.cluster.x-k8s.io\\\" denied the request: ... spec: Forbidden: cannot be modified\""
+level=debug msg="Waiting for OpenStackServer to be ready" ... openStackMachine=\"okd-8k99z-master-0\""
+level=error msg="failed to fetch Cluster: failed to generate asset \"Cluster\": failed to create cluster: failed to provision control-plane machines within 15m0s"
+```
 
-Reserved for the second long-wait. The OKD installer's `wait-for install-complete` watches cluster operators. If any operator is `Available=False` or `Progressing=True` for too long, install fails.
+**Cause:** OKD 4.22 uses CAPI/CAPO internally during install. There's a known race where one of the OpenStackMachine reconciliations gets denied by the immutability webhook on the first attempt, and the dependent OpenStackServer resource never gets created for that one machine. The installer's hard-coded 15-minute "provision" timeout then fires.
+
+**Recovery:**
+1. `openshift-install destroy cluster --dir cluster-config` cleans up Nova + Cinder + Neutron + SG residue (FIPs pre-allocated outside the installer are kept).
+2. Re-render `install-config.yaml` (the installer consumed and deleted the original).
+3. Re-run `create cluster`. The race usually resolves on the second attempt.
+
+The IaC's `03-fips.yml` is designed to re-use already-allocated FIPs (it records them in `.fips.yml`), so the destroy → retry path keeps the same `api`/`ingress` FIPs.
+
+**Best-effort mitigation:** add `api.<cluster>.<basedomain>` and `*.apps.<cluster>.<basedomain>` to the deploy host's `/etc/hosts` pointing at the api/ingress FIPs respectively, so the installer's "is API reachable?" probe doesn't sit on DNS timeouts during the wait.
+
