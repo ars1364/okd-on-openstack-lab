@@ -31,7 +31,11 @@ run 02-project-network.yml
 run 02b-machines-net.yml
 run 03-fips.yml
 run 04-install-config.yml
+# P13 workaround: run drop-in watcher concurrently with create-cluster
+ansible-playbook -i ansible/inventory/lab.yml ansible/playbooks/05a-bootstrap-dropin-watcher.yml &
+WATCHER_PID=$!
 run 05-create-cluster.yml
+wait $WATCHER_PID 2>/dev/null || true
 run 06-post-install.yml
 
 echo ""

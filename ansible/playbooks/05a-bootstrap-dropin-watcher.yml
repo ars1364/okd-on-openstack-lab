@@ -1,0 +1,70 @@
+---
+# Runs in parallel with 05-create-cluster.yml. As soon as the OKD bootstrap VM
+# is SSH-able, inject the P13 drop-in into systemd so node-image-pull.service
+# triggers release-image.service. Without this, OKD-SCOS 4.22 bootstrap hangs
+# at the "Failed to query release image; retrying..." loop and the installer's
+# 20-min API timer fires.
+#
+# This is the runtime workaround for P13 + P15. The image-bake path is
+# preferred long-term (modify the SCOS qcow2 to include the drop-in at /etc)
+# but is non-trivial on ostree-backed SCOS.
+
+- name: Watch for OKD bootstrap and inject P13 drop-in
+  hosts: localhost
+  gather_facts: false
+  tasks:
+
+    - name: Wait for bootstrap server to be ACTIVE in Nova
+      ansible.builtin.shell: |
+        until OS_CLIENT_CONFIG_FILE=~/.config/openstack/clouds.yaml \
+              openstack --os-cloud {{ openstack_cloud_name }} \
+              server list --project {{ okd_project_name }} --name bootstrap -f value -c Status \
+              2>/dev/null | grep -q ACTIVE; do sleep 15; done
+      changed_when: false
+
+    - name: Discover bootstrap FIP
+      ansible.builtin.shell: |
+        OS_CLIENT_CONFIG_FILE=~/.config/openstack/clouds.yaml \
+        openstack --os-cloud {{ openstack_cloud_name }} server list \
+          --project {{ okd_project_name }} --name bootstrap -f value -c Networks \
+          | grep -oE '192\.168\.206\.[0-9]+' | head -1
+      register: boot_fip
+      changed_when: false
+
+    - name: Wait for bootstrap SSH (timeout 8 min — SCOS first boot takes ~3 min)
+      ansible.builtin.wait_for:
+        host: "{{ boot_fip.stdout }}"
+        port: 22
+        timeout: 480
+        delay: 10
+
+    - name: Inject systemd drop-in via SSH (idempotent)
+      ansible.builtin.shell: |
+        ssh -i {{ okd_ssh_pubkey_path | regex_replace('\.pub$', '') }} \
+            -o StrictHostKeyChecking=no \
+            -o ConnectTimeout=10 \
+            core@{{ boot_fip.stdout }} \
+            'sudo mkdir -p /etc/systemd/system/node-image-pull.service.d &&
+             echo -e "[Unit]\nWants=release-image.service\nAfter=release-image.service" | \
+               sudo tee /etc/systemd/system/node-image-pull.service.d/10-require-release-image.conf >/dev/null &&
+             sudo systemctl daemon-reload &&
+             sudo systemctl restart node-image-pull.service'
+      register: inject
+
+    - name: Confirm drop-in is in place + release-image.service started
+      ansible.builtin.shell: |
+        ssh -i {{ okd_ssh_pubkey_path | regex_replace('\.pub$', '') }} \
+            -o StrictHostKeyChecking=no \
+            core@{{ boot_fip.stdout }} \
+            'sudo cat /etc/systemd/system/node-image-pull.service.d/10-require-release-image.conf;
+             echo ===;
+             sudo systemctl is-active release-image.service node-image-pull.service bootkube.service kubelet.service'
+      register: confirm
+      changed_when: false
+
+    - name: Show outcome
+      ansible.builtin.debug:
+        msg:
+          - "bootstrap FIP : {{ boot_fip.stdout }}"
+          - "dropin + state:"
+          - "{{ confirm.stdout_lines }}"

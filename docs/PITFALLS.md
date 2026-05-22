@@ -275,3 +275,53 @@ After this, `node-image-pull.service` succeeds within seconds, then `bootkube` a
 - Try OKD 4.21 to see if it's a 4.22-specific regression
 - Open an upstream issue at github.com/okd-project/okd
 
+
+## P14. `openshift-install` extracts CAPI binaries with relative paths — must invoke with absolute `--dir`
+
+**Symptom:**
+
+```
+level=error msg="failed to fetch Cluster: ... unable to start control plane itself: failed to start the controlplane. retried 5 times: fork/exec cluster-config/cluster-api/etcd: no such file or directory"
+```
+
+**Cause:** When the installer is invoked with a relative `--dir cluster-config`, the logged "extracting" path looks correct, but the subsequent `fork/exec` uses the relative path against a process CWD that has changed.
+
+**Fix:** Always invoke with an absolute path: `openshift-install create cluster --dir /abs/path/to/cluster-config`. The Ansible 05-create-cluster.yml playbook already passes the absolute resolved path.
+
+---
+
+## P15. `openshift-install create cluster` panics (nil-pointer SIGSEGV) when bootstrap.ign was pre-generated and modified
+
+**Symptom:**
+
+```
+level=info msg="Creating infra manifests..."
+panic: runtime error: invalid memory address or nil pointer dereference
+[signal SIGSEGV: segmentation violation code=0x1 addr=0xf0 pc=0x7315f5d]
+
+goroutine 1 [running]:
+github.com/openshift/installer/pkg/infrastructure/clusterapi.(*InfraProvider).Provision(...)
+    /go/src/github.com/openshift/installer/pkg/infrastructure/clusterapi/clusterapi.go:184 +0xd1d
+```
+
+**Context:** This appeared while trying to bake in the P13 drop-in by:
+1. `openshift-install create install-config`
+2. `openshift-install create manifests`
+3. `openshift-install create ignition-configs`
+4. **Patch `bootstrap.ign`** to add the drop-in file
+5. `openshift-install create cluster`
+
+The installer crashes in `InfraProvider.Provision`. Looks like the asset store's state machine assumes "cluster" is always the next step after install-config and doesn't tolerate ignition-configs being pre-generated.
+
+**Workaround (not yet tested):** rebake the SCOS Glance image to include the drop-in file at `/etc/systemd/system/node-image-pull.service.d/10-require-release-image.conf`. Reference the patched image via `clusterOSImage` in install-config. This avoids touching the installer's asset machinery.
+
+```bash
+sudo virt-customize -a scos-c10s-okd422-patched.qcow2 \
+  --mkdir /etc/systemd/system/node-image-pull.service.d \
+  --upload /tmp/dropin:/etc/systemd/system/node-image-pull.service.d/10-require-release-image.conf
+```
+
+Then `openstack image create scos-c10s-okd422-patched` and use it.
+
+This is also the correct path long-term: bake substrate-specific patches into the image, not into the install pipeline.
+
