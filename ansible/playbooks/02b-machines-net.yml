@@ -28,7 +28,7 @@
         state: present
       register: machines_net
 
-    - name: Ensure machines subnet exists (with DNS pre-set)
+    - name: Ensure machines subnet exists (with DNS pre-set + VIP carve-out)
       openstack.cloud.subnet:
         cloud: "{{ openstack_cloud_name }}"
         project: "{{ okd_proj.projects[0].id }}"
@@ -38,6 +38,11 @@
         ip_version: 4
         enable_dhcp: true
         dns_nameservers: "{{ okd_subnet_dns_nameservers }}"
+        # Reserve 10.0.0.0/24 for OKD apiVIP+ingressVIP. OKD installer
+        # rejects VIPs that fall in the DHCP allocation pool. Keep DHCP
+        # leases to 10.0.1.0+ (P10 in PITFALLS.md).
+        allocation_pool_start: "{{ okd_machines_alloc_start }}"
+        allocation_pool_end: "{{ okd_machines_alloc_end }}"
         state: present
       register: machines_subnet
 

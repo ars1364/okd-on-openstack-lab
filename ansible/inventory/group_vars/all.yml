@@ -68,6 +68,12 @@ okd_subnet_dns_nameservers:
   - 8.8.8.8
   - 1.1.1.1
 
+# DHCP allocation pool. Leave 10.0.0.0/24 free of DHCP leases so the OKD
+# installer can place apiVIP (default 10.0.0.5) + ingressVIP (default 10.0.0.7)
+# outside the pool (see P10 in docs/PITFALLS.md).
+okd_machines_alloc_start: "10.0.1.0"
+okd_machines_alloc_end:   "10.0.255.254"
+
 # ── Floating IPs (allocated dynamically; pinned values can override) ───────
 okd_api_floating_ip: ""           # leave empty → role allocates new
 okd_ingress_floating_ip: ""

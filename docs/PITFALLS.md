@@ -178,3 +178,25 @@ platform:
 
 The installer then re-uses the pre-created subnet instead of making its own.
 
+
+## P10. OKD installer rejects apiVIP/ingressVIP when they fall in the machinesSubnet DHCP pool
+
+**Symptom:**
+
+```
+level=error msg=failed to fetch Metadata: failed to load asset "Install Config": failed to create install config: [platform.openstack.apiVIPs: Invalid value: "10.0.0.5": apiVIP can not fall in a MachineNetwork allocation pool, platform.openstack.ingressVIPs: Invalid value: "10.0.0.7": ingressVIP can not fall in a MachineNetwork allocation pool]
+```
+
+**Cause:** After pre-creating the machinesSubnet (P9 fix), the installer derives apiVIP=`.5` and ingressVIP=`.7` from the subnet's CIDR. Both must be **outside** the DHCP allocation pool, otherwise they could be handed out to a VM and conflict. Neutron's default `allocation_pools` covers the whole CIDR minus the gateway, so the validation fails.
+
+**Fix:** Restrict the subnet's allocation pool to leave `10.0.0.0/24` free for the VIPs:
+
+```yaml
+- openstack.cloud.subnet:
+    cidr: "10.0.0.0/16"
+    allocation_pool_start: "10.0.1.0"
+    allocation_pool_end:   "10.0.255.254"
+```
+
+DHCP leases now hand out from `10.0.1.x` onward, and the installer's default VIPs `10.0.0.5`/`10.0.0.7` are reserved.
+
