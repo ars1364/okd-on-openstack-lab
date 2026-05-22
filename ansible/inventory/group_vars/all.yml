@@ -62,6 +62,11 @@ okd_service_cidr: "172.30.0.0/16"
 okd_cluster_cidr: "10.128.0.0/14"
 okd_cluster_host_prefix: 23
 okd_network_type: OVNKubernetes
+# DNS nameservers pushed to the machines subnet via DHCP. Without these the
+# OKD bootstrap can't resolve quay.io (see P9 in docs/PITFALLS.md).
+okd_subnet_dns_nameservers:
+  - 8.8.8.8
+  - 1.1.1.1
 
 # ── Floating IPs (allocated dynamically; pinned values can override) ───────
 okd_api_floating_ip: ""           # leave empty → role allocates new

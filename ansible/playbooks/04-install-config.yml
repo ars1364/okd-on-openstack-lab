@@ -18,6 +18,9 @@
     - name: Load runtime FIP facts written by 03-fips.yml
       ansible.builtin.include_vars: "{{ okd_cluster_dir }}/.fips.yml"
 
+    - name: Load machines-net facts written by 02b-machines-net.yml
+      ansible.builtin.include_vars: "{{ okd_cluster_dir }}/.machines-net.yml"
+
     - name: Look up admin password from the working clouds.yaml (~/.config/openstack)
       ansible.builtin.shell: |
         python3 -c "

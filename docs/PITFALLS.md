@@ -141,3 +141,40 @@ The metadata netns appears within seconds of the agent starting.
 
 **Why this hit OKD harder than KaaS:** OKD creates 4 control-plane VMs (bootstrap + 3 masters) in close succession, all on the same fresh tenant network. Nova's filter scheduler with anti-affinity spreads them across all 3 chassis. So 1-2 of them inevitably land on the broken chassis and silently fail ignition, with no fast retry — the installer's 20-min `wait-for-api` timeout is the only failure signal.
 
+
+## P9. OKD-installer-created subnet has empty `dns_nameservers` → bootstrap can't resolve quay.io
+
+**Symptom:** After the metadata fix (P8), SCOS ignition succeeds and SSH on the bootstrap works, but `node-image-pull.service` runs in a loop:
+
+```
+node-image-pull.sh: Failed to query release image; retrying...
+podman: lookup quay.io on [::1]:53: read udp [::1]:41096->[::1]:53: read: connection refused
+```
+
+The installer's `wait-for-api` then times out at 20 min because the temporary control plane never starts.
+
+**Cause:** When OKD's CAPO creates the tenant subnet during install, `dns_nameservers` on the subnet is empty. Neutron's DHCP agent pushes no DNS, so VMs end up with `/etc/resolv.conf` pointing only at `127.0.0.1` (NetworkManager-resolved style), which is not listening for these SCOS images. `podman`/`skopeo` use the libc resolver path which fails to reach external DNS.
+
+`getent` works because nsswitch falls back to other paths; `podman pull` does not.
+
+**Fix:** Pre-create the tenant network + subnet **with DNS set** before invoking the installer, and pass the subnet UUID to `install-config.yaml` via `platform.openstack.machinesSubnet`. The IaC does this in `02b-machines-net.yml`:
+
+```yaml
+- openstack.cloud.subnet:
+    name: "{{ okd_cluster_name }}-machines-subnet"
+    cidr: "{{ okd_machine_cidr }}"
+    dns_nameservers:
+      - 8.8.8.8
+      - 1.1.1.1
+```
+
+…and the rendered `install-config.yaml` includes:
+
+```yaml
+platform:
+  openstack:
+    machinesSubnet: <subnet-UUID>
+```
+
+The installer then re-uses the pre-created subnet instead of making its own.
+

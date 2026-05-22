@@ -1,0 +1,69 @@
+---
+# Pre-create the OKD "machines subnet" with DNS nameservers set, so that VMs
+# scheduled into it get usable DNS via DHCP. Otherwise the OKD installer
+# creates a subnet with empty dns_nameservers and bootstrap/masters end up
+# unable to resolve quay.io (P9 in PITFALLS.md).
+#
+# The install-config template references the resulting subnet UUID via
+# platform.openstack.machinesSubnet so the installer reuses it instead of
+# creating its own.
+
+- name: Pre-create machines network+subnet+router with DNS set
+  hosts: localhost
+  gather_facts: false
+  tasks:
+
+    - name: Resolve okd project id
+      openstack.cloud.project_info:
+        cloud: "{{ openstack_cloud_name }}"
+        name: "{{ okd_project_name }}"
+      register: okd_proj
+
+    - name: Ensure machines network exists
+      openstack.cloud.network:
+        cloud: "{{ openstack_cloud_name }}"
+        project: "{{ okd_proj.projects[0].id }}"
+        name: "{{ okd_cluster_name }}-machines-net"
+        external: false
+        state: present
+      register: machines_net
+
+    - name: Ensure machines subnet exists (with DNS pre-set)
+      openstack.cloud.subnet:
+        cloud: "{{ openstack_cloud_name }}"
+        project: "{{ okd_proj.projects[0].id }}"
+        name: "{{ okd_cluster_name }}-machines-subnet"
+        network_name: "{{ machines_net.network.name }}"
+        cidr: "{{ okd_machine_cidr }}"
+        ip_version: 4
+        enable_dhcp: true
+        dns_nameservers: "{{ okd_subnet_dns_nameservers }}"
+        state: present
+      register: machines_subnet
+
+    - name: Ensure machines router exists with external gateway
+      openstack.cloud.router:
+        cloud: "{{ openstack_cloud_name }}"
+        project: "{{ okd_proj.projects[0].id }}"
+        name: "{{ okd_cluster_name }}-router"
+        network: "{{ okd_external_network }}"
+        interfaces:
+          - "{{ machines_subnet.subnet.name }}"
+        state: present
+      register: machines_router
+
+    - name: Persist machines subnet UUID + router UUID for install-config
+      ansible.builtin.copy:
+        dest: "{{ okd_cluster_dir }}/.machines-net.yml"
+        mode: "0600"
+        content: |
+          okd_machines_subnet_id: "{{ machines_subnet.subnet.id }}"
+          okd_machines_network_id: "{{ machines_net.network.id }}"
+          okd_machines_router_id: "{{ machines_router.router.id }}"
+
+    - name: Show machines network details
+      ansible.builtin.debug:
+        msg:
+          - "machines network : {{ machines_net.network.name }} id={{ machines_net.network.id }}"
+          - "machines subnet  : {{ machines_subnet.subnet.name }} id={{ machines_subnet.subnet.id }} cidr={{ okd_machine_cidr }} dns={{ okd_subnet_dns_nameservers }}"
+          - "machines router  : {{ machines_router.router.name }} ext={{ okd_external_network }}"

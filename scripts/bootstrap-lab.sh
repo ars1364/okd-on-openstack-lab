@@ -28,6 +28,7 @@ run() {
 run 00-preflight.yml
 run 01-glance-image.yml
 run 02-project-network.yml
+run 02b-machines-net.yml
 run 03-fips.yml
 run 04-install-config.yml
 run 05-create-cluster.yml

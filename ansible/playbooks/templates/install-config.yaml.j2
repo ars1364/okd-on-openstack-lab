@@ -40,6 +40,7 @@ platform:
     apiFloatingIP: {{ okd_api_floating_ip }}
     ingressFloatingIP: {{ okd_ingress_floating_ip }}
     clusterOSImage: {{ okd_image_name }}
+    machinesSubnet: {{ okd_machines_subnet_id }}
 publish: External
 pullSecret: {{ lookup('file', okd_pull_secret_path) | trim | to_json }}
 sshKey: |
