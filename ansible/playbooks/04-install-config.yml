@@ -18,12 +18,25 @@
     - name: Load runtime FIP facts written by 03-fips.yml
       ansible.builtin.include_vars: "{{ okd_cluster_dir }}/.fips.yml"
 
-    - name: Look up admin password from lab clouds.yaml (kolla-admin entry)
+    - name: Look up admin password from the working clouds.yaml (~/.config/openstack)
       ansible.builtin.shell: |
         python3 -c "
-        import yaml
-        d=yaml.safe_load(open('{{ openstack_clouds_yaml }}'))
-        print(d['clouds']['{{ openstack_cloud_name }}']['auth']['password'])
+        import yaml, os, sys
+        candidates = [
+          os.path.expanduser('~/.config/openstack/clouds.yaml'),
+          '/etc/openstack/clouds.yaml',
+          '{{ openstack_clouds_yaml }}',
+        ]
+        for p in candidates:
+            try:
+                d = yaml.safe_load(open(p))
+                if d and '{{ openstack_cloud_name }}' in d.get('clouds', {}):
+                    print(d['clouds']['{{ openstack_cloud_name }}']['auth']['password'])
+                    sys.exit(0)
+            except FileNotFoundError:
+                continue
+        sys.stderr.write('no clouds.yaml found with cloud {{ openstack_cloud_name }}\n')
+        sys.exit(1)
         "
       register: admin_pw
       changed_when: false
