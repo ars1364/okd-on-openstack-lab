@@ -96,3 +96,48 @@ The IaC's `03-fips.yml` is designed to re-use already-allocated FIPs (it records
 
 **Best-effort mitigation:** add `api.<cluster>.<basedomain>` and `*.apps.<cluster>.<basedomain>` to the deploy host's `/etc/hosts` pointing at the api/ingress FIPs respectively, so the installer's "is API reachable?" probe doesn't sit on DNS timeouts during the wait.
 
+
+## P8. `neutron_ovn_metadata_agent` (and `neutron_server`) missing from one Kolla controller — silent VM metadata failure on that chassis
+
+**Symptom:** OKD bootstrap (and any masters) that happen to be Nova-scheduled on the affected chassis sit at the SCOS ignition stage with:
+
+```
+ignition[825]: GET http://169.254.169.254/openstack/latest/user_data: attempt #1
+...
+ignition[825]: GET error: ... dial tcp 169.254.169.254:80: i/o timeout
+ignition[825]: failed to fetch config from metadata service: unable to fetch resource in time
+```
+
+VMs on the other (healthy) chassis ignite fine, so the failure looks like a flake until you correlate landing-host with metadata outcome. We saw the same symptom on a KaaS worker (S-1 in `kaas_rerun_2026_05_22.md`), then on the OKD bootstrap on a fresh install — same root cause.
+
+**Cause:** On the affected Kolla controller, the `neutron_ovn_metadata_agent` container does not exist at all. `docker ps --all` lists only OVN core (`ovn_northd`, `ovn_sb_db`, `ovn_nb_db`, `ovn_controller`) plus `nova_novncproxy`. The healthy controllers also run `neutron_server` and `neutron_ovn_metadata_agent`. With no agent on the chassis, there's no `ovnmeta-<networkid>` netns and no haproxy listening on 169.254.169.254 for VMs landing there.
+
+Most likely root cause is configuration drift from a partial `kolla-ansible reconfigure` run that touched some hosts but not this one (we have at least one D-1 reconfigure in this lab's history that limited host scope).
+
+**Detection:**
+
+```bash
+# Run on each Kolla controller
+sudo docker ps --all --format '{{.Names}} {{.Status}}' | grep -i neutron
+```
+
+Expected: `neutron_server` and `neutron_ovn_metadata_agent` Up. If either is missing, the chassis is broken.
+
+**Fix:**
+
+```bash
+sudo bash -c "source /opt/kolla-venv/bin/activate && \
+  kolla-ansible reconfigure -i /etc/kolla/multinode -t neutron --limit <affected-host>"
+```
+
+Verify after:
+
+```bash
+sudo ssh <affected-host> "sudo docker ps --format '{{.Names}} {{.Status}}' | grep neutron"
+sudo ssh <affected-host> "sudo ip netns list | grep ovnmeta"
+```
+
+The metadata netns appears within seconds of the agent starting.
+
+**Why this hit OKD harder than KaaS:** OKD creates 4 control-plane VMs (bootstrap + 3 masters) in close succession, all on the same fresh tenant network. Nova's filter scheduler with anti-affinity spreads them across all 3 chassis. So 1-2 of them inevitably land on the broken chassis and silently fail ignition, with no fast retry — the installer's 20-min `wait-for-api` timeout is the only failure signal.
+
