@@ -1,0 +1,46 @@
+apiVersion: v1
+baseDomain: {{ okd_base_domain }}
+metadata:
+  name: {{ okd_cluster_name }}
+networking:
+  clusterNetwork:
+    - cidr: {{ okd_cluster_cidr }}
+      hostPrefix: {{ okd_cluster_host_prefix }}
+  networkType: {{ okd_network_type }}
+  serviceNetwork:
+    - {{ okd_service_cidr }}
+  machineNetwork:
+    - cidr: {{ okd_machine_cidr }}
+controlPlane:
+  hyperthreading: Enabled
+  name: master
+  replicas: {{ okd_controlplane_count }}
+  platform:
+    openstack:
+      type: {{ okd_flavor_name }}
+      rootVolume:
+        size: {{ okd_root_volume_gb }}
+        types:
+          - {{ okd_volume_type }}
+compute:
+  - hyperthreading: Enabled
+    name: worker
+    replicas: {{ okd_compute_count }}
+    platform:
+      openstack:
+        type: {{ okd_flavor_name }}
+        rootVolume:
+          size: {{ okd_root_volume_gb }}
+          types:
+            - {{ okd_volume_type }}
+platform:
+  openstack:
+    cloud: {{ okd_cloud_name_for_installer }}
+    externalNetwork: {{ okd_external_network }}
+    apiFloatingIP: {{ okd_api_floating_ip }}
+    ingressFloatingIP: {{ okd_ingress_floating_ip }}
+    clusterOSImage: {{ okd_image_name }}
+publish: External
+pullSecret: '{{ okd_pull_secret_contents }}'
+sshKey: |
+  {{ okd_ssh_pubkey_contents }}

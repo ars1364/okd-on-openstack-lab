@@ -1,0 +1,39 @@
+## Secrets / per-deploy artifacts (NEVER commit)
+clouds.yaml
+pull-secret.txt
+*.kubeconfig
+auth/
+metadata.json
+.openshift_install.log
+.openshift_install_state.json
+cluster-config/
+**/*.tfstate
+**/*.tfstate.backup
+**/.terraform/
+ssh-keys/
+*.pem
+
+## Generated install artifacts
+install-config.yaml
+manifests/
+openshift/
+master.ign
+worker.ign
+bootstrap.ign
+
+## Local caches
+images/
+bin/
+*.tar.gz
+*.qcow2
+*.qcow2.gz
+
+## Ansible runtime
+*.retry
+.ansible/
+__pycache__/
+
+## OS
+.DS_Store
+.idea/
+.vscode/

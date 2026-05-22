@@ -1,0 +1,50 @@
+---
+# Destroy the OKD cluster + audit residue. The installer keeps a metadata.json
+# inside cluster-config/ that lists all tagged resources to delete.
+
+- name: Destroy OKD cluster + residue audit
+  hosts: localhost
+  gather_facts: false
+  tasks:
+
+    - name: Confirm metadata.json exists (installer state)
+      ansible.builtin.stat:
+        path: "{{ okd_cluster_dir }}/metadata.json"
+      register: meta
+      failed_when: not meta.stat.exists
+
+    - name: Invoke openshift-install destroy cluster
+      ansible.builtin.command:
+        cmd: "{{ okd_binaries_dir }}/openshift-install destroy cluster --dir {{ okd_cluster_dir }} --log-level=info"
+      environment:
+        OS_CLIENT_CONFIG_FILE: "{{ okd_cluster_dir }}/clouds.yaml"
+      register: oi_destroy
+      async: 1800
+      poll: 30
+      failed_when: oi_destroy.rc != 0
+
+    - name: Audit residue in okd project (admin scope)
+      openstack.cloud.server_info:
+        cloud: "{{ openstack_cloud_name }}"
+        filters:
+          project_id: "{{ okd_project_name }}"
+      register: srv_residue
+
+    - name: Show residue counts (servers + ports + volumes via openstack CLI fallback)
+      ansible.builtin.shell: |
+        export OS_CLIENT_CONFIG_FILE={{ openstack_clouds_yaml }}
+        echo "servers:"; openstack server list --project {{ okd_project_name }} --all-projects -f value | wc -l
+        echo "volumes:"; openstack volume list --project {{ okd_project_name }} --all-projects -f value | wc -l
+        echo "ports:"  ; openstack port list   --project {{ okd_project_name }} -f value | wc -l
+        echo "fips:"   ; openstack floating ip list --project {{ okd_project_name }} -f value | wc -l
+        echo "nets:"   ; openstack network list --project {{ okd_project_name }} -f value | wc -l
+        echo "routers:"; openstack router list --project {{ okd_project_name }} -f value | wc -l
+        echo "sgs:"    ; openstack security group list --project {{ okd_project_name }} -f value | wc -l
+      args:
+        executable: /bin/bash
+      register: residue
+      changed_when: false
+
+    - name: Print residue audit
+      ansible.builtin.debug:
+        var: residue.stdout_lines

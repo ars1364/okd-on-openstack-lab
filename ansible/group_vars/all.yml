@@ -1,0 +1,80 @@
+---
+# ── Cluster identity ─────────────────────────────────────────────────────────
+okd_cluster_name: okd
+okd_base_domain: lab.cloudinative.com   # API → api.okd.lab.cloudinative.com etc.
+okd_release: 4.22.0-okd-scos.0
+
+# ── OpenStack project / tenancy ─────────────────────────────────────────────
+okd_project_name: okd
+okd_admin_user: admin
+okd_admin_roles:
+  - admin
+  - member
+
+okd_quota:
+  cores: 32
+  instances: 20
+  ram: 81920          # MB → 80 GiB
+  volumes: 30
+  gigabytes: 800
+  floating_ips: 10
+  secgroups: 20
+  secgroup_rules: 100
+  networks: 10
+  subnets: 10
+  routers: 5
+  ports: 50
+
+# ── Compute / flavor ─────────────────────────────────────────────────────────
+okd_flavor_name: okd.large
+okd_flavor_vcpus: 4
+okd_flavor_ram_mb: 16384
+okd_flavor_disk_gb: 100
+
+okd_controlplane_count: 3
+okd_compute_count: 0          # compact 3-node: workers carried on CP nodes
+okd_bootstrap_inplace: false  # standard external bootstrap host
+
+# ── Storage ─────────────────────────────────────────────────────────────────
+okd_volume_type: ceph         # Cinder volume type → rbd-1 backend
+okd_root_volume_gb: 30
+
+# ── Image (Glance) ──────────────────────────────────────────────────────────
+okd_image_name: scos-c10s-okd422
+okd_image_local_path: /home/ubuntu/okd-build/images/scos-10.0.20251103-0-openstack.x86_64.qcow2
+okd_image_sha256_prefix: "6576a72257a0ac11"
+okd_image_tags:
+  - okd
+  - scos-10.0.20251103-0
+okd_image_properties:
+  hw_disk_bus: virtio
+  hw_scsi_model: virtio-scsi
+  hw_qemu_guest_agent: "no"
+  os_distro: fedora-coreos
+  os_version: "42"
+
+# ── Network ─────────────────────────────────────────────────────────────────
+okd_external_network: ext-net
+okd_machine_cidr: "10.0.0.0/16"   # OKD machine network on the cluster-internal Neutron net
+okd_service_cidr: "172.30.0.0/16"
+okd_cluster_cidr: "10.128.0.0/14"
+okd_cluster_host_prefix: 23
+okd_network_type: OVNKubernetes
+
+# ── Floating IPs (allocated dynamically; pinned values can override) ───────
+okd_api_floating_ip: ""           # leave empty → role allocates new
+okd_ingress_floating_ip: ""
+
+# ── Binaries / artifacts ─────────────────────────────────────────────────────
+okd_binaries_dir: /home/ubuntu/okd-build/bin
+okd_cluster_dir: "{{ playbook_dir }}/../../cluster-config"
+
+# ── SSH key (injected into SCOS via cloud-init/ignition) ────────────────────
+okd_ssh_pubkey_path: /home/ubuntu/okd-build/okd-key.pub
+
+# ── Pull secret (OKD-SCOS only needs placeholder) ───────────────────────────
+okd_pull_secret_path: /home/ubuntu/okd-build/pull-secret.txt
+
+# ── Toggles ─────────────────────────────────────────────────────────────────
+okd_skip_preflight: false
+okd_keep_bootstrap: false      # if true, do not auto-destroy bootstrap after CP up

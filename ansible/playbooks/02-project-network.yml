@@ -1,0 +1,62 @@
+---
+# Create OKD project + admin role bindings + quotas + flavor (admin scope).
+# This is the only set of OpenStack mutations that needs admin (cloud) scope.
+
+- name: OKD tenant + flavor scaffolding (admin scope)
+  hosts: localhost
+  gather_facts: false
+  tasks:
+
+    - name: Ensure okd project exists
+      openstack.cloud.project:
+        cloud: "{{ openstack_cloud_name }}"
+        name: "{{ okd_project_name }}"
+        description: "OKD-on-OpenStack lab tenant"
+        enabled: true
+        domain: default
+        state: present
+      register: okd_project
+
+    - name: Bind admin user roles on okd project
+      openstack.cloud.role_assignment:
+        cloud: "{{ openstack_cloud_name }}"
+        user: "{{ okd_admin_user }}"
+        project: "{{ okd_project_name }}"
+        role: "{{ item }}"
+        state: present
+      loop: "{{ okd_admin_roles }}"
+
+    - name: Set quotas on okd project (compute)
+      openstack.cloud.quota:
+        cloud: "{{ openstack_cloud_name }}"
+        name: "{{ okd_project_name }}"
+        cores: "{{ okd_quota.cores }}"
+        instances: "{{ okd_quota.instances }}"
+        ram: "{{ okd_quota.ram }}"
+        floating_ips: "{{ okd_quota.floating_ips }}"
+        security_groups: "{{ okd_quota.secgroups }}"
+        security_group_rules: "{{ okd_quota.secgroup_rules }}"
+        networks: "{{ okd_quota.networks }}"
+        subnets: "{{ okd_quota.subnets }}"
+        routers: "{{ okd_quota.routers }}"
+        ports: "{{ okd_quota.ports }}"
+        volumes: "{{ okd_quota.volumes }}"
+        gigabytes: "{{ okd_quota.gigabytes }}"
+
+    - name: Ensure okd.large flavor exists
+      openstack.cloud.compute_flavor:
+        cloud: "{{ openstack_cloud_name }}"
+        name: "{{ okd_flavor_name }}"
+        ram: "{{ okd_flavor_ram_mb }}"
+        vcpus: "{{ okd_flavor_vcpus }}"
+        disk: "{{ okd_flavor_disk_gb }}"
+        is_public: true
+        state: present
+
+    # The OKD installer creates its own tenant network + router + SGs.
+    # We do not pre-create them here on purpose: that lets `openshift-install destroy`
+    # do a clean residue audit + delete-everything-tagged.
+
+    - name: Show okd project id (for use in later playbooks)
+      ansible.builtin.debug:
+        msg: "okd project_id={{ okd_project.project.id }}"

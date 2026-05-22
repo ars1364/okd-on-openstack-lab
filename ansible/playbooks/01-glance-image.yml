@@ -1,0 +1,44 @@
+---
+# Upload SCOS qcow2 into Glance if not already present. Idempotent.
+
+- name: Ensure SCOS image is in Glance
+  hosts: localhost
+  gather_facts: false
+  tasks:
+
+    - name: Look up Glance image by name
+      openstack.cloud.image_info:
+        cloud: "{{ openstack_cloud_name }}"
+        image: "{{ okd_image_name }}"
+      register: img_query
+
+    - name: Upload SCOS qcow2 (when absent)
+      openstack.cloud.image:
+        cloud: "{{ openstack_cloud_name }}"
+        name: "{{ okd_image_name }}"
+        filename: "{{ okd_image_local_path }}"
+        disk_format: qcow2
+        container_format: bare
+        is_public: true
+        tags: "{{ okd_image_tags }}"
+        properties: "{{ okd_image_properties }}"
+        state: present
+      when: img_query.images | length == 0
+      register: img_upload
+
+    - name: Re-fetch image status
+      openstack.cloud.image_info:
+        cloud: "{{ openstack_cloud_name }}"
+        image: "{{ okd_image_name }}"
+      register: img_after
+
+    - name: Confirm image is active
+      ansible.builtin.assert:
+        that:
+          - img_after.images | length == 1
+          - img_after.images[0].status == 'active'
+        fail_msg: "Glance image {{ okd_image_name }} did not reach active"
+
+    - name: Print Glance image id
+      ansible.builtin.debug:
+        msg: "Glance image {{ okd_image_name }} id={{ img_after.images[0].id }} size={{ img_after.images[0].size }}"

@@ -1,0 +1,89 @@
+---
+# Render install-config.yaml from template + assemble a project-scoped clouds.yaml
+# that the openshift-install binary will consume.
+
+- name: Render install-config.yaml and project-scoped clouds.yaml
+  hosts: localhost
+  gather_facts: false
+  vars:
+    okd_cloud_name_for_installer: openstack
+  tasks:
+
+    - name: Ensure cluster-config dir exists
+      ansible.builtin.file:
+        path: "{{ okd_cluster_dir }}"
+        state: directory
+        mode: "0700"
+
+    - name: Load runtime FIP facts written by 03-fips.yml
+      ansible.builtin.include_vars: "{{ okd_cluster_dir }}/.fips.yml"
+
+    - name: Read SSH public key
+      ansible.builtin.slurp:
+        src: "{{ okd_ssh_pubkey_path }}"
+      register: ssh_pub_b64
+
+    - name: Read pull-secret
+      ansible.builtin.slurp:
+        src: "{{ okd_pull_secret_path }}"
+      register: pull_b64
+
+    - name: Set rendered key/secret facts
+      ansible.builtin.set_fact:
+        okd_ssh_pubkey_contents: "{{ ssh_pub_b64.content | b64decode | trim }}"
+        okd_pull_secret_contents: "{{ pull_b64.content | b64decode | trim }}"
+
+    - name: Look up admin password from lab clouds.yaml (kolla-admin entry)
+      ansible.builtin.shell: |
+        python3 -c "
+        import yaml
+        d=yaml.safe_load(open('{{ openstack_clouds_yaml }}'))
+        print(d['clouds']['{{ openstack_cloud_name }}']['auth']['password'])
+        "
+      register: admin_pw
+      changed_when: false
+      no_log: true
+
+    - name: Render project-scoped clouds.yaml for openshift-install
+      ansible.builtin.copy:
+        dest: "{{ okd_cluster_dir }}/clouds.yaml"
+        mode: "0600"
+        content: |
+          clouds:
+            openstack:
+              auth:
+                auth_url: http://172.17.17.115:5000/v3
+                project_name: {{ okd_project_name }}
+                project_domain_name: Default
+                username: {{ okd_admin_user }}
+                user_domain_name: Default
+                password: "{{ admin_pw.stdout }}"
+              region_name: lab1
+              identity_api_version: 3
+              interface: public
+              verify: false
+
+    - name: Render install-config.yaml
+      ansible.builtin.template:
+        src: templates/install-config.yaml.j2
+        dest: "{{ okd_cluster_dir }}/install-config.yaml"
+        mode: "0600"
+
+    - name: Back up install-config.yaml (installer consumes + deletes the source)
+      ansible.builtin.copy:
+        src: "{{ okd_cluster_dir }}/install-config.yaml"
+        dest: "{{ okd_cluster_dir }}/install-config.yaml.bak"
+        mode: "0600"
+
+    - name: Show rendered install-config (sensitive lines stripped)
+      ansible.builtin.shell: |
+        sed -e 's/password:.*$/password: REDACTED/' \
+            -e 's/pullSecret:.*$/pullSecret: REDACTED/' \
+            -e '/ssh-/d' \
+            {{ okd_cluster_dir }}/install-config.yaml
+      register: ic_view
+      changed_when: false
+
+    - name: Print redacted install-config
+      ansible.builtin.debug:
+        var: ic_view.stdout_lines

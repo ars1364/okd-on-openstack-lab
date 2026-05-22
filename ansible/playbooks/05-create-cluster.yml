@@ -1,0 +1,46 @@
+---
+# Run `openshift-install create cluster`. This blocks until bootstrap completes
+# and the cluster is ready. Failure modes are captured + logged.
+
+- name: Run openshift-install create cluster
+  hosts: localhost
+  gather_facts: false
+  tasks:
+
+    - name: Confirm install-config exists
+      ansible.builtin.stat:
+        path: "{{ okd_cluster_dir }}/install-config.yaml"
+      register: ic_stat
+      failed_when: not ic_stat.stat.exists
+
+    - name: Confirm clouds.yaml exists
+      ansible.builtin.stat:
+        path: "{{ okd_cluster_dir }}/clouds.yaml"
+      register: cy_stat
+      failed_when: not cy_stat.stat.exists
+
+    - name: Invoke openshift-install create cluster
+      ansible.builtin.command:
+        cmd: "{{ okd_binaries_dir }}/openshift-install create cluster --dir {{ okd_cluster_dir }} --log-level=info"
+      environment:
+        OS_CLIENT_CONFIG_FILE: "{{ okd_cluster_dir }}/clouds.yaml"
+      register: oi_run
+      async: 5400          # 90 min ceiling
+      poll: 60             # poll every minute
+      failed_when: oi_run.rc != 0
+
+    - name: Show installer tail (last 40 lines)
+      ansible.builtin.shell: |
+        tail -40 {{ okd_cluster_dir }}/.openshift_install.log 2>/dev/null || echo "(no log file)"
+      register: oi_tail
+      changed_when: false
+
+    - name: Print installer tail
+      ansible.builtin.debug:
+        var: oi_tail.stdout_lines
+
+    - name: Confirm auth/kubeconfig exists
+      ansible.builtin.stat:
+        path: "{{ okd_cluster_dir }}/auth/kubeconfig"
+      register: kc_stat
+      failed_when: not kc_stat.stat.exists

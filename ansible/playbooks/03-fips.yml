@@ -1,0 +1,48 @@
+---
+# Allocate the API + Ingress floating IPs in the okd project. The OKD installer
+# requires both to exist before `create cluster` so it can wire them up.
+
+- name: Allocate API + Ingress FIPs for OKD
+  hosts: localhost
+  gather_facts: false
+  tasks:
+
+    - name: Resolve okd project id
+      openstack.cloud.project_info:
+        cloud: "{{ openstack_cloud_name }}"
+        name: "{{ okd_project_name }}"
+      register: okd_proj
+
+    - name: Allocate API FIP (if not pinned)
+      openstack.cloud.floating_ip:
+        cloud: "{{ openstack_cloud_name }}"
+        network: "{{ okd_external_network }}"
+        project: "{{ okd_proj.projects[0].id }}"
+        state: present
+        purge: false
+      register: api_fip_alloc
+      when: okd_api_floating_ip | length == 0
+
+    - name: Allocate Ingress FIP (if not pinned)
+      openstack.cloud.floating_ip:
+        cloud: "{{ openstack_cloud_name }}"
+        network: "{{ okd_external_network }}"
+        project: "{{ okd_proj.projects[0].id }}"
+        state: present
+        purge: false
+      register: ing_fip_alloc
+      when: okd_ingress_floating_ip | length == 0
+
+    - name: Persist resolved FIPs into runtime facts file
+      ansible.builtin.copy:
+        dest: "{{ playbook_dir }}/../../cluster-config/.fips.yml"
+        mode: "0600"
+        content: |
+          okd_api_floating_ip: "{{ okd_api_floating_ip if okd_api_floating_ip|length > 0 else api_fip_alloc.floating_ip.floating_ip_address }}"
+          okd_ingress_floating_ip: "{{ okd_ingress_floating_ip if okd_ingress_floating_ip|length > 0 else ing_fip_alloc.floating_ip.floating_ip_address }}"
+
+    - name: Show FIPs allocated
+      ansible.builtin.debug:
+        msg:
+          - "API FIP     : {{ okd_api_floating_ip if okd_api_floating_ip|length > 0 else api_fip_alloc.floating_ip.floating_ip_address }}"
+          - "Ingress FIP : {{ okd_ingress_floating_ip if okd_ingress_floating_ip|length > 0 else ing_fip_alloc.floating_ip.floating_ip_address }}"

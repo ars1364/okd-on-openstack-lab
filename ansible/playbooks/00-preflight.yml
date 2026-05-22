@@ -1,0 +1,86 @@
+---
+# Pre-flight: verify the deploy host and the target lab are ready before any
+# OpenStack mutation. Fails fast on missing pieces.
+
+- name: OKD pre-flight gates
+  hosts: localhost
+  gather_facts: false
+  tasks:
+
+    - name: Verify openshift-install binary exists and is executable
+      ansible.builtin.command: "{{ okd_binaries_dir }}/openshift-install version"
+      register: oi_ver
+      changed_when: false
+      failed_when: oi_ver.rc != 0 or okd_release not in oi_ver.stdout
+
+    - name: Show openshift-install version
+      ansible.builtin.debug:
+        msg: "{{ oi_ver.stdout_lines | first }}"
+
+    - name: Verify oc + kubectl
+      ansible.builtin.command: "{{ okd_binaries_dir }}/{{ item }} version --client"
+      loop: [oc, kubectl]
+      register: cli_ver
+      changed_when: false
+
+    - name: Verify SCOS qcow2 image present (local)
+      ansible.builtin.stat:
+        path: "{{ okd_image_local_path }}"
+      register: scos_stat
+      failed_when: not scos_stat.stat.exists
+
+    - name: Verify SCOS qcow2 sha256 prefix
+      ansible.builtin.command:
+        cmd: "sha256sum {{ okd_image_local_path }}"
+      register: scos_sum
+      changed_when: false
+      failed_when: not (scos_sum.stdout.startswith(okd_image_sha256_prefix))
+
+    - name: Verify SSH pubkey present
+      ansible.builtin.stat:
+        path: "{{ okd_ssh_pubkey_path }}"
+      register: ssh_stat
+      failed_when: not ssh_stat.stat.exists
+
+    - name: Verify pull-secret file present
+      ansible.builtin.stat:
+        path: "{{ okd_pull_secret_path }}"
+      register: pull_stat
+      failed_when: not pull_stat.stat.exists
+
+    - name: Verify /etc/hosts has *.cloudinative.com entries
+      ansible.builtin.shell: |
+        set -e
+        grep -qE 'docker.cloudinative.com'   /etc/hosts
+        grep -qE 'quay.cloudinative.com'     /etc/hosts
+      changed_when: false
+
+    - name: Verify clouds.yaml exists and has the named cloud
+      ansible.builtin.shell: |
+        set -e
+        test -r "{{ openstack_clouds_yaml }}"
+        python3 -c "import yaml,sys; d=yaml.safe_load(open('{{ openstack_clouds_yaml }}')); sys.exit(0 if '{{ openstack_cloud_name }}' in d.get('clouds',{}) else 1)"
+      changed_when: false
+
+    - name: Probe lab Keystone via openstack.cloud
+      openstack.cloud.identity_user_info:
+        cloud: "{{ openstack_cloud_name }}"
+        name: "{{ okd_admin_user }}"
+      register: admin_lookup
+
+    - name: Sanity admin user found
+      ansible.builtin.assert:
+        that: admin_lookup.users | length > 0
+        fail_msg: "Could not find {{ okd_admin_user }} in lab Keystone"
+
+    - name: Print pre-flight summary
+      ansible.builtin.debug:
+        msg:
+          - "openshift-install : {{ oi_ver.stdout_lines | first }}"
+          - "SCOS qcow2 path   : {{ okd_image_local_path }}"
+          - "SCOS sha256       : {{ scos_sum.stdout.split() | first }}"
+          - "Cloud             : {{ openstack_cloud_name }} via {{ openstack_clouds_yaml }}"
+          - "Project to create : {{ okd_project_name }}"
+          - "Topology          : {{ okd_controlplane_count }} CP + {{ okd_compute_count }} worker"
+          - "Flavor            : {{ okd_flavor_name }} ({{ okd_flavor_vcpus }}/{{ okd_flavor_ram_mb }}MB/{{ okd_flavor_disk_gb }}GB)"
+          - "Root volume       : {{ okd_root_volume_gb }} GB on type={{ okd_volume_type }}"

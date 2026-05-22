@@ -1,0 +1,75 @@
+---
+# Post-install: copy kubeconfig somewhere convenient, print kubeadmin password
+# (for first console login), do a smoke kubectl get nodes, capture cluster
+# operators state, and write a brief summary file.
+
+- name: OKD post-install smoke + artifact capture
+  hosts: localhost
+  gather_facts: false
+  tasks:
+
+    - name: Copy kubeconfig out of cluster-config dir
+      ansible.builtin.copy:
+        src: "{{ okd_cluster_dir }}/auth/kubeconfig"
+        dest: "{{ okd_cluster_dir }}/{{ okd_cluster_name }}.kubeconfig"
+        mode: "0600"
+
+    - name: Read kubeadmin-password file
+      ansible.builtin.slurp:
+        src: "{{ okd_cluster_dir }}/auth/kubeadmin-password"
+      register: kubeadmin_b64
+      no_log: true
+
+    - name: Stash kubeadmin password into a 0600 file
+      ansible.builtin.copy:
+        dest: "{{ okd_cluster_dir }}/{{ okd_cluster_name }}.kubeadmin-password"
+        content: "{{ kubeadmin_b64.content | b64decode }}"
+        mode: "0600"
+
+    - name: kubectl get nodes -o wide
+      ansible.builtin.command:
+        cmd: "{{ okd_binaries_dir }}/kubectl get nodes -o wide"
+      environment:
+        KUBECONFIG: "{{ okd_cluster_dir }}/auth/kubeconfig"
+      register: nodes_out
+      changed_when: false
+
+    - name: kubectl get clusteroperators
+      ansible.builtin.command:
+        cmd: "{{ okd_binaries_dir }}/oc get clusteroperators"
+      environment:
+        KUBECONFIG: "{{ okd_cluster_dir }}/auth/kubeconfig"
+      register: co_out
+      changed_when: false
+
+    - name: kubectl get pods -A | grep -v Running | grep -v Completed
+      ansible.builtin.shell: |
+        {{ okd_binaries_dir }}/kubectl --kubeconfig {{ okd_cluster_dir }}/auth/kubeconfig get pods -A \
+          | (grep -v 'Running\|Completed' || true)
+      register: bad_pods
+      changed_when: false
+
+    - name: Write deploy summary
+      ansible.builtin.copy:
+        dest: "{{ okd_cluster_dir }}/DEPLOY-SUMMARY.txt"
+        mode: "0644"
+        content: |
+          OKD cluster   : {{ okd_cluster_name }}.{{ okd_base_domain }}
+          API           : https://api.{{ okd_cluster_name }}.{{ okd_base_domain }}:6443
+          Console       : https://console-openshift-console.apps.{{ okd_cluster_name }}.{{ okd_base_domain }}
+          kubeconfig    : {{ okd_cluster_dir }}/{{ okd_cluster_name }}.kubeconfig
+          kubeadmin pw  : {{ okd_cluster_dir }}/{{ okd_cluster_name }}.kubeadmin-password
+          Release       : {{ okd_release }}
+
+          === nodes ===
+          {{ nodes_out.stdout }}
+
+          === clusteroperators ===
+          {{ co_out.stdout }}
+
+          === non-Running/Completed pods ===
+          {{ bad_pods.stdout }}
+
+    - name: Print deploy summary path
+      ansible.builtin.debug:
+        msg: "summary: {{ okd_cluster_dir }}/DEPLOY-SUMMARY.txt"
