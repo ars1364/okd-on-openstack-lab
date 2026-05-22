@@ -42,6 +42,16 @@ platform:
     clusterOSImage: {{ okd_image_name }}
     machinesSubnet: {{ okd_machines_subnet_id }}
 publish: External
+{% if okd_image_content_sources is defined and okd_image_content_sources | length > 0 %}
+imageContentSources:
+{% for ics in okd_image_content_sources %}
+  - mirrors:
+{% for m in ics.mirrors %}
+      - {{ m }}
+{% endfor %}
+    source: {{ ics.source }}
+{% endfor %}
+{% endif %}
 pullSecret: {{ lookup('file', okd_pull_secret_path) | trim | to_json }}
 sshKey: |
   {{ lookup('file', okd_ssh_pubkey_path) | trim }}

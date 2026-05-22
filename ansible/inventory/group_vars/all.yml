@@ -91,3 +91,14 @@ okd_pull_secret_path: /home/ubuntu/okd-build/pull-secret.txt
 # ── Toggles ─────────────────────────────────────────────────────────────────
 okd_skip_preflight: false
 okd_keep_bootstrap: false      # if true, do not auto-destroy bootstrap after CP up
+
+# ── P16: mirror OKD release payload through quay.cloudinative.com ───────────
+# The Nexus quay proxy at quay.cloudinative.com caches the OKD payload.
+# When set, install-config gets imageContentSources telling bootstrap to
+# redirect pulls from quay.io/okd to the local mirror — the Nexus cache
+# turns minute-long upstream pulls into second-long LAN pulls. Pre-warm
+# the cache with scripts/warm-okd-payload.sh before running 05-create-cluster.
+okd_image_content_sources:
+  - mirrors:
+      - quay.cloudinative.com/okd
+    source: quay.io/okd
