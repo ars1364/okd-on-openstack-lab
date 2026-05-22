@@ -241,3 +241,37 @@ rm -f cluster-config/install-config.yaml cluster-config/.openshift_install_state
 ```
 
 (The destroy playbook will also do this implicitly via `openshift-install destroy cluster`.)
+
+## P13. OKD-SCOS 4.22 bootstrap doesn't auto-trigger `release-image.service` → install hangs forever before bootkube starts
+
+**Symptom (after P8/P9/P10 are all fixed):** Bootstrap VM boots SCOS, ignition succeeds, SSH works, DNS works, `podman pull` of the release image succeeds manually. But:
+
+```
+sudo systemctl is-active release-image.service   → inactive
+sudo systemctl is-active node-image-pull.service → activating (looping)
+sudo systemctl is-active bootkube.service        → inactive
+sudo systemctl is-active kubelet.service         → inactive
+```
+
+The `node-image-pull.sh` loop calls `image_for stream-coreos` which runs `podman inspect quay.io/okd/scos-release@...`. The image isn't in podman's local storage yet because `release-image.service` (which pulls it) never started. Static unit with no auto-start trigger. Reverse-deps show only `crio-configure.service` and `kubelet.service` Want it — and those don't start either.
+
+The installer's 20-min `wait-for kube-api` hard-fails because the bootkube control plane never starts.
+
+**Workaround (manual unblock that we verified works):**
+
+```bash
+ssh core@<bootstrap-fip>
+sudo podman pull quay.io/okd/scos-release@sha256:<digest>
+sudo systemctl start release-image.service
+```
+
+After this, `node-image-pull.service` succeeds within seconds, then `bootkube` and `kubelet` start automatically and the cluster forms. But by then the installer's 20-min timer has already fired.
+
+**Open question:** What is supposed to trigger `release-image.service` on a fresh boot? Currently unknown — looks like a regression in OKD-SCOS 4.22 service ordering, or a side effect of setting `platform.openstack.machinesSubnet` which alters the bootstrap's ignition payload. Reproduces on both auto-created and pre-created machinesSubnet paths.
+
+**Next steps to investigate (future session):**
+- Compare ignition payloads with and without `machinesSubnet` set
+- Check upstream OKD 4.22 ignition templates for the missing trigger
+- Try OKD 4.21 to see if it's a 4.22-specific regression
+- Open an upstream issue at github.com/okd-project/okd
+
