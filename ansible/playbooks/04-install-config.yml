@@ -18,21 +18,6 @@
     - name: Load runtime FIP facts written by 03-fips.yml
       ansible.builtin.include_vars: "{{ okd_cluster_dir }}/.fips.yml"
 
-    - name: Read SSH public key
-      ansible.builtin.slurp:
-        src: "{{ okd_ssh_pubkey_path }}"
-      register: ssh_pub_b64
-
-    - name: Read pull-secret
-      ansible.builtin.slurp:
-        src: "{{ okd_pull_secret_path }}"
-      register: pull_b64
-
-    - name: Set rendered key/secret facts
-      ansible.builtin.set_fact:
-        okd_ssh_pubkey_contents: "{{ ssh_pub_b64.content | b64decode | trim }}"
-        okd_pull_secret_contents: "{{ pull_b64.content | b64decode | trim }}"
-
     - name: Look up admin password from lab clouds.yaml (kolla-admin entry)
       ansible.builtin.shell: |
         python3 -c "

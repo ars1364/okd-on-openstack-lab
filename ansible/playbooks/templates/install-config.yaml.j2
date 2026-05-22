@@ -41,6 +41,6 @@ platform:
     ingressFloatingIP: {{ okd_ingress_floating_ip }}
     clusterOSImage: {{ okd_image_name }}
 publish: External
-pullSecret: '{{ okd_pull_secret_contents }}'
+pullSecret: {{ lookup('file', okd_pull_secret_path) | trim | to_json }}
 sshKey: |
-  {{ okd_ssh_pubkey_contents }}
+  {{ lookup('file', okd_ssh_pubkey_path) | trim }}
