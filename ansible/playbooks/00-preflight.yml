@@ -23,18 +23,21 @@
       register: cli_ver
       changed_when: false
 
-    - name: Verify SCOS qcow2 image present (local)
+    - name: Verify SCOS qcow2 (decompressed) image present
       ansible.builtin.stat:
         path: "{{ okd_image_local_path }}"
       register: scos_stat
       failed_when: not scos_stat.stat.exists
 
-    - name: Verify SCOS qcow2 sha256 prefix
+    - name: Verify SCOS source .qcow2.gz integrity (sha256 prefix from stream JSON)
       ansible.builtin.command:
-        cmd: "sha256sum {{ okd_image_local_path }}"
+        cmd: "sha256sum {{ okd_image_gz_path }}"
       register: scos_sum
       changed_when: false
-      failed_when: not (scos_sum.stdout.startswith(okd_image_sha256_prefix))
+      failed_when: not scos_sum.stdout.startswith(okd_image_gz_sha256_prefix)
+      when:
+        - okd_image_gz_path is defined
+        - okd_image_gz_sha256_prefix | length > 0
 
     - name: Verify SSH pubkey present
       ansible.builtin.stat:

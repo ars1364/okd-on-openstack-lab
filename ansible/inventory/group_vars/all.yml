@@ -42,7 +42,9 @@ okd_root_volume_gb: 30
 # ── Image (Glance) ──────────────────────────────────────────────────────────
 okd_image_name: scos-c10s-okd422
 okd_image_local_path: /home/ubuntu/okd-build/images/scos-10.0.20251103-0-openstack.x86_64.qcow2
-okd_image_sha256_prefix: "6576a72257a0ac11"
+# sha256 of the upstream .qcow2.gz as published in openshift-install's stream JSON
+okd_image_gz_path: /home/ubuntu/okd-build/images/scos-10.0.20251103-0-openstack.x86_64.qcow2.gz
+okd_image_gz_sha256_prefix: "6576a72257a0ac11"
 okd_image_tags:
   - okd
   - scos-10.0.20251103-0

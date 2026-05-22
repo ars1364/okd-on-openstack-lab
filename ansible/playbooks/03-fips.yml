@@ -1,11 +1,27 @@
 ---
-# Allocate the API + Ingress floating IPs in the okd project. The OKD installer
-# requires both to exist before `create cluster` so it can wire them up.
+# Allocate API + Ingress floating IPs in the okd project. Idempotent: if
+# cluster-config/.fips.yml already records both addresses and they exist in
+# Neutron, reuse them.
 
 - name: Allocate API + Ingress FIPs for OKD
   hosts: localhost
   gather_facts: false
   tasks:
+
+    - name: Ensure cluster-config dir exists
+      ansible.builtin.file:
+        path: "{{ okd_cluster_dir }}"
+        state: directory
+        mode: "0700"
+
+    - name: Check for previously recorded FIPs
+      ansible.builtin.stat:
+        path: "{{ okd_cluster_dir }}/.fips.yml"
+      register: fip_record
+
+    - name: Load previously recorded FIPs (if any)
+      ansible.builtin.include_vars: "{{ okd_cluster_dir }}/.fips.yml"
+      when: fip_record.stat.exists
 
     - name: Resolve okd project id
       openstack.cloud.project_info:
@@ -13,36 +29,67 @@
         name: "{{ okd_project_name }}"
       register: okd_proj
 
-    - name: Allocate API FIP (if not pinned)
-      openstack.cloud.floating_ip:
-        cloud: "{{ openstack_cloud_name }}"
-        network: "{{ okd_external_network }}"
-        project: "{{ okd_proj.projects[0].id }}"
-        state: present
-        purge: false
-      register: api_fip_alloc
-      when: okd_api_floating_ip | length == 0
+    - name: Verify recorded API FIP still exists in Neutron
+      ansible.builtin.shell: |
+        OS_CLIENT_CONFIG_FILE=~/.config/openstack/clouds.yaml openstack --os-cloud {{ openstack_cloud_name }} \
+          floating ip show {{ okd_api_floating_ip }} -f value -c floating_ip_address 2>/dev/null
+      register: api_fip_exists
+      when:
+        - fip_record.stat.exists
+        - okd_api_floating_ip is defined
+        - okd_api_floating_ip | length > 0
+      failed_when: false
+      changed_when: false
 
-    - name: Allocate Ingress FIP (if not pinned)
-      openstack.cloud.floating_ip:
-        cloud: "{{ openstack_cloud_name }}"
-        network: "{{ okd_external_network }}"
-        project: "{{ okd_proj.projects[0].id }}"
-        state: present
-        purge: false
+    - name: Allocate API FIP via CLI (when no usable recorded value)
+      ansible.builtin.shell: |
+        OS_CLIENT_CONFIG_FILE=~/.config/openstack/clouds.yaml openstack --os-cloud {{ openstack_cloud_name }} \
+          floating ip create --project {{ okd_project_name }} {{ okd_external_network }} \
+          -f value -c floating_ip_address
+      register: api_fip_alloc
+      when: (not fip_record.stat.exists)
+            or (okd_api_floating_ip is not defined)
+            or (okd_api_floating_ip | length == 0)
+            or (api_fip_exists is defined and api_fip_exists.rc != 0)
+
+    - name: Verify recorded Ingress FIP still exists in Neutron
+      ansible.builtin.shell: |
+        OS_CLIENT_CONFIG_FILE=~/.config/openstack/clouds.yaml openstack --os-cloud {{ openstack_cloud_name }} \
+          floating ip show {{ okd_ingress_floating_ip }} -f value -c floating_ip_address 2>/dev/null
+      register: ing_fip_exists
+      when:
+        - fip_record.stat.exists
+        - okd_ingress_floating_ip is defined
+        - okd_ingress_floating_ip | length > 0
+      failed_when: false
+      changed_when: false
+
+    - name: Allocate Ingress FIP via CLI (when no usable recorded value)
+      ansible.builtin.shell: |
+        OS_CLIENT_CONFIG_FILE=~/.config/openstack/clouds.yaml openstack --os-cloud {{ openstack_cloud_name }} \
+          floating ip create --project {{ okd_project_name }} {{ okd_external_network }} \
+          -f value -c floating_ip_address
       register: ing_fip_alloc
-      when: okd_ingress_floating_ip | length == 0
+      when: (not fip_record.stat.exists)
+            or (okd_ingress_floating_ip is not defined)
+            or (okd_ingress_floating_ip | length == 0)
+            or (ing_fip_exists is defined and ing_fip_exists.rc != 0)
+
+    - name: Compute final FIP values
+      ansible.builtin.set_fact:
+        api_fip_final:  "{{ (okd_api_floating_ip if (okd_api_floating_ip|default('') | length > 0 and (api_fip_exists.rc | default(1) == 0)) else api_fip_alloc.stdout | trim) }}"
+        ing_fip_final:  "{{ (okd_ingress_floating_ip if (okd_ingress_floating_ip|default('') | length > 0 and (ing_fip_exists.rc | default(1) == 0)) else ing_fip_alloc.stdout | trim) }}"
 
     - name: Persist resolved FIPs into runtime facts file
       ansible.builtin.copy:
-        dest: "{{ playbook_dir }}/../../cluster-config/.fips.yml"
+        dest: "{{ okd_cluster_dir }}/.fips.yml"
         mode: "0600"
         content: |
-          okd_api_floating_ip: "{{ okd_api_floating_ip if okd_api_floating_ip|length > 0 else api_fip_alloc.floating_ip.floating_ip_address }}"
-          okd_ingress_floating_ip: "{{ okd_ingress_floating_ip if okd_ingress_floating_ip|length > 0 else ing_fip_alloc.floating_ip.floating_ip_address }}"
+          okd_api_floating_ip: "{{ api_fip_final }}"
+          okd_ingress_floating_ip: "{{ ing_fip_final }}"
 
     - name: Show FIPs allocated
       ansible.builtin.debug:
         msg:
-          - "API FIP     : {{ okd_api_floating_ip if okd_api_floating_ip|length > 0 else api_fip_alloc.floating_ip.floating_ip_address }}"
-          - "Ingress FIP : {{ okd_ingress_floating_ip if okd_ingress_floating_ip|length > 0 else ing_fip_alloc.floating_ip.floating_ip_address }}"
+          - "API FIP     : {{ api_fip_final }}"
+          - "Ingress FIP : {{ ing_fip_final }}"
